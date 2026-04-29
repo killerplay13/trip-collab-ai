@@ -13,6 +13,7 @@ from app.schemas.ai import (
     SettlementExplanation,
 )
 from app.schemas.common import ApiResponse
+from app.services.ai_service import AIService
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -29,15 +30,22 @@ def get_provider(settings: Settings = Depends(get_settings)) -> AIProvider:
     raise HTTPException(status_code=500, detail=f"Unsupported AI provider: {settings.ai_provider}")
 
 
+def get_ai_service(
+    provider: AIProvider = Depends(get_provider),
+    settings: Settings = Depends(get_settings),
+) -> AIService:
+    return AIService(provider, settings)
+
+
 @router.post(
     "/itinerary/generate",
     response_model=ApiResponse[ItineraryGenerateDraft],
 )
 async def generate_itinerary(
     request: ItineraryGenerateRequest,
-    provider: AIProvider = Depends(get_provider),
+    service: AIService = Depends(get_ai_service),
 ) -> ApiResponse[ItineraryGenerateDraft]:
-    draft = await provider.generate_itinerary(request)
+    draft = await service.generate_itinerary(request)
     return ApiResponse(success=True, data=draft, error=None)
 
 
@@ -47,9 +55,9 @@ async def generate_itinerary(
 )
 async def explain_settlement(
     request: SettlementExplainRequest,
-    provider: AIProvider = Depends(get_provider),
+    service: AIService = Depends(get_ai_service),
 ) -> ApiResponse[SettlementExplanation]:
-    explanation = await provider.explain_settlement(request)
+    explanation = await service.explain_settlement(request)
     return ApiResponse(success=True, data=explanation, error=None)
 
 
@@ -59,7 +67,7 @@ async def explain_settlement(
 )
 async def parse_receipt(
     request: ReceiptParseRequest,
-    provider: AIProvider = Depends(get_provider),
+    service: AIService = Depends(get_ai_service),
 ) -> ApiResponse[ReceiptParseDraft]:
-    draft = await provider.parse_receipt(request)
+    draft = await service.parse_receipt(request)
     return ApiResponse(success=True, data=draft, error=None)
