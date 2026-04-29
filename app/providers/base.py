@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 from app.schemas.ai import (
-    ItineraryGenerateDraft,
+    ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
     ReceiptParseRequest,
@@ -14,7 +14,7 @@ class AIProvider(ABC):
     @abstractmethod
     async def generate_itinerary(
         self, request: ItineraryGenerateRequest
-    ) -> ItineraryGenerateDraft:
+    ) -> ItineraryGenerateData:
         raise NotImplementedError
 
     @abstractmethod

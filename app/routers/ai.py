@@ -5,7 +5,7 @@ from app.providers.base import AIProvider
 from app.providers.mock_provider import MockAIProvider
 from app.providers.openrouter_provider import OpenRouterProvider
 from app.schemas.ai import (
-    ItineraryGenerateDraft,
+    ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
     ReceiptParseRequest,
@@ -25,7 +25,7 @@ def get_provider(settings: Settings = Depends(get_settings)) -> AIProvider:
     if provider == "mock":
         return MockAIProvider()
     if provider == "openrouter":
-        return OpenRouterProvider()
+        return OpenRouterProvider(settings)
 
     raise HTTPException(status_code=500, detail=f"Unsupported AI provider: {settings.ai_provider}")
 
@@ -39,12 +39,12 @@ def get_ai_service(
 
 @router.post(
     "/itinerary/generate",
-    response_model=ApiResponse[ItineraryGenerateDraft],
+    response_model=ApiResponse[ItineraryGenerateData],
 )
 async def generate_itinerary(
     request: ItineraryGenerateRequest,
     service: AIService = Depends(get_ai_service),
-) -> ApiResponse[ItineraryGenerateDraft]:
+) -> ApiResponse[ItineraryGenerateData]:
     draft = await service.generate_itinerary(request)
     return ApiResponse(success=True, data=draft, error=None)
 

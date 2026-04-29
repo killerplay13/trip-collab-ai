@@ -1,6 +1,9 @@
+from datetime import timedelta
+
 from app.providers.base import AIProvider
 from app.schemas.ai import (
-    ItineraryGenerateDraft,
+    ItineraryDraftItem,
+    ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
     ReceiptParseRequest,
@@ -12,28 +15,32 @@ from app.schemas.ai import (
 class MockAIProvider(AIProvider):
     async def generate_itinerary(
         self, request: ItineraryGenerateRequest
-    ) -> ItineraryGenerateDraft:
-        preferences = ", ".join(request.preferences) if request.preferences else "general"
+    ) -> ItineraryGenerateData:
+        interests = ", ".join(request.interests) if request.interests else "general"
+        day_count = max((request.end_date - request.start_date).days + 1, 1)
 
-        return ItineraryGenerateDraft(
-            title=f"Draft itinerary for {request.destination}",
+        return ItineraryGenerateData(
             items=[
-                {
-                    "day": day,
-                    "title": f"{request.destination} day {day}",
-                    "activities": [
-                        "Morning landmark visit",
-                        "Local lunch",
-                        "Afternoon free exploration",
-                    ],
-                    "note": "Draft only. Spring Boot must validate permissions and persist approved changes.",
-                }
-                for day in range(1, request.days + 1)
+                ItineraryDraftItem(
+                    day_date=request.start_date + timedelta(days=day_index),
+                    title=f"{request.destination} day {day_index + 1}",
+                    start_time=None,
+                    end_time=None,
+                    location_name=request.destination,
+                    map_url=None,
+                    note="Draft only. Spring Boot must validate permissions and persist approved changes.",
+                    sort_order=1,
+                )
+                for day_index in range(day_count)
             ],
             explanation=(
                 "This mock AI response only creates an itinerary draft and does not write to DB. "
-                f"Trip {request.trip_id} preferences considered: {preferences}."
+                f"Trip {request.trip_title} interests considered: {interests}."
             ),
+            warnings=[],
+            source="mock",
+            fallback=False,
+            fallback_reason=None,
         )
 
     async def explain_settlement(
