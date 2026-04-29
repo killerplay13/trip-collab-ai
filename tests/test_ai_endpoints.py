@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -123,3 +124,39 @@ async def test_generate_itinerary_provider_exception_returns_fallback() -> None:
     assert result.title == "Tokyo 行程草稿"
     assert result.items[0]["title"] == "暫時無法產生完整 AI 行程"
     assert "does not write to DB" in result.explanation
+
+
+@pytest.mark.asyncio
+async def test_timeout_fallback_writes_structured_log(caplog: pytest.LogCaptureFixture) -> None:
+    service = AIService(SlowProvider(), Settings(llm_timeout_seconds=0))
+    request = ItineraryGenerateRequest(
+        trip_id="trip_123",
+        destination="Tokyo",
+        days=2,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.services.ai_service"):
+        result = await service.generate_itinerary(request)
+
+    assert result.title == "Tokyo 行程草稿"
+    assert "task_name=itinerary.generate" in caplog.text
+    assert "fallback_reason=timeout" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_provider_error_fallback_writes_structured_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = AIService(BrokenProvider(), Settings(llm_timeout_seconds=1))
+    request = ItineraryGenerateRequest(
+        trip_id="trip_123",
+        destination="Tokyo",
+        days=2,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.services.ai_service"):
+        result = await service.generate_itinerary(request)
+
+    assert result.title == "Tokyo 行程草稿"
+    assert "task_name=itinerary.generate" in caplog.text
+    assert "fallback_reason=provider_error" in caplog.text

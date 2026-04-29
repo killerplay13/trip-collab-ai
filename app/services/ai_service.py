@@ -1,5 +1,9 @@
 import asyncio
+import logging
+import time
+from collections.abc import Callable
 from typing import Awaitable, TypeVar
+from uuid import uuid4
 
 from app.config import Settings
 from app.providers.base import AIProvider
@@ -14,6 +18,7 @@ from app.schemas.ai import (
 
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class AIService:
@@ -24,33 +29,78 @@ class AIService:
     async def generate_itinerary(
         self, request: ItineraryGenerateRequest
     ) -> ItineraryGenerateDraft:
-        return await self._run_with_fallback(
+        return await self._execute_with_fallback(
+            "itinerary.generate",
             self.provider.generate_itinerary(request),
-            self._itinerary_fallback(request),
+            lambda: self._itinerary_fallback(request),
         )
 
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
-        return await self._run_with_fallback(
+        return await self._execute_with_fallback(
+            "settlement.explain",
             self.provider.explain_settlement(request),
-            self._settlement_fallback(),
+            self._settlement_fallback,
         )
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
-        return await self._run_with_fallback(
+        return await self._execute_with_fallback(
+            "receipt.parse",
             self.provider.parse_receipt(request),
-            self._receipt_fallback(),
+            self._receipt_fallback,
         )
 
-    async def _run_with_fallback(self, awaitable: Awaitable[T], fallback: T) -> T:
+    async def _execute_with_fallback(
+        self,
+        task_name: str,
+        provider_call: Awaitable[T],
+        fallback_factory: Callable[[], T],
+    ) -> T:
+        request_id = str(uuid4())
+        provider_name = self.provider.__class__.__name__
+        started_at = time.perf_counter()
+
         try:
-            return await asyncio.wait_for(
-                awaitable,
+            result = await asyncio.wait_for(
+                provider_call,
                 timeout=self.settings.llm_timeout_seconds,
             )
-        except (asyncio.TimeoutError, Exception):
-            return fallback
+            duration_ms = self._duration_ms(started_at)
+            logger.info(
+                "ai_execution task_name=%s provider_name=%s request_id=%s "
+                "success=true fallback=false fallback_reason=none duration_ms=%s",
+                task_name,
+                provider_name,
+                request_id,
+                duration_ms,
+            )
+            return result
+        except asyncio.TimeoutError:
+            duration_ms = self._duration_ms(started_at)
+            logger.warning(
+                "ai_execution task_name=%s provider_name=%s request_id=%s "
+                "success=false fallback=true fallback_reason=timeout duration_ms=%s",
+                task_name,
+                provider_name,
+                request_id,
+                duration_ms,
+            )
+            return fallback_factory()
+        except Exception:
+            duration_ms = self._duration_ms(started_at)
+            logger.exception(
+                "ai_execution task_name=%s provider_name=%s request_id=%s "
+                "success=false fallback=true fallback_reason=provider_error duration_ms=%s",
+                task_name,
+                provider_name,
+                request_id,
+                duration_ms,
+            )
+            return fallback_factory()
+
+    def _duration_ms(self, started_at: float) -> int:
+        return round((time.perf_counter() - started_at) * 1000)
 
     def _itinerary_fallback(
         self, request: ItineraryGenerateRequest

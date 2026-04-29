@@ -21,6 +21,7 @@ The main systems remain separate:
 - Spring Boot remains responsible for token-based trip/member permissions, database writes, and business rules.
 - FastAPI is responsible for LLM provider selection, prompts, schema validation, and fallback handling.
 - Phase 0 uses `MockAIProvider`.
+- Phase 0.5 adds structured logging for provider execution, timeout fallback, and provider error fallback.
 - `OpenRouterProvider` is intentionally present but not implemented until Phase 1.
 
 ## Install
@@ -48,6 +49,7 @@ Copy `.env.example` to `.env` if local overrides are needed.
 ```bash
 AI_PROVIDER=mock
 APP_ENV=local
+LOG_LEVEL=INFO
 ```
 
 Supported Phase 0 provider:
@@ -89,6 +91,38 @@ Expected response:
 
 ```bash
 pytest
+```
+
+## Phase 0.5 Observability
+
+All AI endpoint calls go through `AIService`.
+
+`AIService` wraps provider calls with timeout and fallback handling. Provider exceptions are not returned as raw endpoint errors. Instead, the service returns a safe fallback result that still matches the existing response schema.
+
+Structured logs include:
+
+- `task_name`
+- `provider_name`
+- `request_id`
+- `success`
+- `fallback`
+- `fallback_reason`
+- `duration_ms`
+
+Fallback reasons currently include:
+
+- `none`
+- `timeout`
+- `provider_error`
+
+The API response contract remains:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "error": null
+}
 ```
 
 ## Mock Endpoint Examples

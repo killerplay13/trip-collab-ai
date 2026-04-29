@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     llm_timeout_seconds: int = 20
     llm_max_retries: int = 1
+    log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
         env_file=".env",
