@@ -20,6 +20,7 @@ from app.providers.exceptions import (
     ProviderRateLimitError,
 )
 from app.schemas.ai import (
+    ExistingItineraryItem,
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
@@ -122,6 +123,38 @@ def test_generate_itinerary_endpoint() -> None:
     assert body["data"]["source"] == "mock"
     assert body["data"]["fallback"] is False
     assert body["data"]["fallback_reason"] is None
+
+
+def test_generate_itinerary_request_accepts_existing_context_defaults() -> None:
+    request = ItineraryGenerateRequest(**itinerary_request_payload())
+
+    assert request.existing_itinerary == []
+    assert request.avoid_duplicate_places is True
+
+
+def test_generate_itinerary_request_accepts_existing_context() -> None:
+    payload = itinerary_request_payload()
+    payload["existing_itinerary"] = [
+        {
+            "day_date": "2026-05-01",
+            "title": "Ueno Park",
+            "location_name": "Ueno Park",
+            "note": "Already planned.",
+        }
+    ]
+    payload["avoid_duplicate_places"] = True
+
+    request = ItineraryGenerateRequest(**payload)
+
+    assert request.existing_itinerary == [
+        ExistingItineraryItem(
+            day_date="2026-05-01",
+            title="Ueno Park",
+            location_name="Ueno Park",
+            note="Already planned.",
+        )
+    ]
+    assert request.avoid_duplicate_places is True
 
 
 def test_generate_itinerary_rejects_end_date_before_start_date() -> None:
@@ -486,6 +519,11 @@ def test_itinerary_prompt_builder_contains_contract_terms() -> None:
     assert "Tokyo" in prompt
     assert "2026-05-01" in prompt
     assert "2026-05-02" in prompt
+    assert "unreasonable places" in prompt
+    assert "geographically incompatible" in prompt
+    assert "warnings" in prompt
+    assert "Do not force impossible places" in prompt
+    assert "unrealistic transportation" in prompt
 
 
 def test_settlement_prompt_builder_contains_json_only_contract() -> None:
@@ -536,3 +574,30 @@ def test_settlement_prompt_still_forbids_recalculation() -> None:
     assert "must not" in prompt
     assert "derive" in prompt
     assert "Do not use total_expense" in prompt
+
+
+def test_itinerary_prompt_builder_contains_existing_context_terms() -> None:
+    payload = itinerary_request_payload()
+    payload["existing_itinerary"] = [
+        {
+            "day_date": "2026-05-01",
+            "title": "Ueno Park",
+            "location_name": "Ueno Park",
+            "note": "Already arranged for day one.",
+        }
+    ]
+    payload["avoid_duplicate_places"] = True
+    request = ItineraryGenerateRequest(**payload)
+
+    prompt = build_itinerary_generate_prompt(request)
+
+    assert "Existing itinerary:" in prompt
+    assert "avoid_duplicate_places: True" in prompt
+    assert "Avoid recommending places or activities already listed in existing_itinerary" in prompt
+    assert "must_visit_place already exists" in prompt
+    assert "Ueno Park" in prompt
+    assert "Already arranged for day one." in prompt
+    assert "user-friendly warnings" in prompt
+    assert "Do not mention internal field names" in prompt
+    assert "avoid_duplicate_places" in prompt
+    assert "existing_itinerary" in prompt

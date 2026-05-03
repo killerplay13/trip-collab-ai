@@ -4,6 +4,13 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class ExistingItineraryItem(BaseModel):
+    day_date: date
+    title: str
+    location_name: Optional[str] = None
+    note: Optional[str] = None
+
+
 class ItineraryGenerateRequest(BaseModel):
     trip_title: str
     destination: str
@@ -18,6 +25,8 @@ class ItineraryGenerateRequest(BaseModel):
     avoid_places: list[str] = Field(default_factory=list)
     notes: Optional[str] = None
     language: str = "zh-TW"
+    existing_itinerary: list[ExistingItineraryItem] = Field(default_factory=list)
+    avoid_duplicate_places: bool = True
 
     @field_validator("trip_title", "destination", "timezone", "language")
     @classmethod
