@@ -53,6 +53,14 @@ class ItineraryDraftItem(BaseModel):
     sort_order: int = Field(ge=1)
 
 
+class ItineraryQualityChecks(BaseModel):
+    has_out_of_scope_place: bool = False
+    has_unrealistic_transport: bool = False
+    has_time_conflict: bool = False
+    has_duplicate_place: bool = False
+    needs_user_review: bool = False
+
+
 class ItineraryGenerateData(BaseModel):
     items: list[ItineraryDraftItem]
     explanation: str
@@ -60,6 +68,7 @@ class ItineraryGenerateData(BaseModel):
     source: str = "mock"
     fallback: bool = False
     fallback_reason: Optional[str] = None
+    quality_checks: Optional[ItineraryQualityChecks] = None
 
 
 class SettlementMember(BaseModel):

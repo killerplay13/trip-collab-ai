@@ -24,6 +24,7 @@ from app.schemas.ai import (
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
+    ItineraryQualityChecks,
     ReceiptParseDraft,
     ReceiptParseRequest,
     SettlementExplainRequest,
@@ -118,11 +119,36 @@ def test_generate_itinerary_endpoint() -> None:
         "source",
         "fallback",
         "fallback_reason",
+        "quality_checks",
     }
     assert body["data"]["items"]
     assert body["data"]["source"] == "mock"
     assert body["data"]["fallback"] is False
     assert body["data"]["fallback_reason"] is None
+
+
+def test_itinerary_generate_data_accepts_quality_checks() -> None:
+    data = ItineraryGenerateData(
+        items=[
+            ItineraryDraftItem(
+                day_date="2026-05-01",
+                title="Draft",
+                sort_order=1,
+            )
+        ],
+        explanation="Draft.",
+        quality_checks=ItineraryQualityChecks(
+            has_out_of_scope_place=True,
+            has_unrealistic_transport=True,
+            needs_user_review=True,
+        ),
+    )
+
+    assert data.quality_checks is not None
+    assert data.quality_checks.has_out_of_scope_place is True
+    assert data.quality_checks.has_unrealistic_transport is True
+    assert data.quality_checks.has_time_conflict is False
+    assert data.quality_checks.needs_user_review is True
 
 
 def test_generate_itinerary_request_accepts_existing_context_defaults() -> None:
@@ -352,6 +378,8 @@ async def test_generate_itinerary_timeout_returns_fallback() -> None:
 
     assert result.fallback is True
     assert result.fallback_reason == "timeout"
+    assert result.quality_checks is not None
+    assert result.quality_checks.needs_user_review is True
     assert result.items[0].note == "AI provider timeout or failed. This is a safe fallback draft."
     assert "temporarily unavailable" in result.explanation
 
@@ -365,6 +393,8 @@ async def test_generate_itinerary_provider_exception_returns_fallback() -> None:
 
     assert result.fallback is True
     assert result.fallback_reason == "provider_error"
+    assert result.quality_checks is not None
+    assert result.quality_checks.needs_user_review is True
     assert result.items[0].title == "Tokyo fallback draft"
     assert "does not write to DB" in result.explanation
 
@@ -516,6 +546,12 @@ def test_itinerary_prompt_builder_contains_contract_terms() -> None:
     assert "start_time" in prompt
     assert "end_time" in prompt
     assert "sort_order" in prompt
+    assert "quality_checks" in prompt
+    assert "has_out_of_scope_place" in prompt
+    assert "has_unrealistic_transport" in prompt
+    assert "has_time_conflict" in prompt
+    assert "has_duplicate_place" in prompt
+    assert "needs_user_review" in prompt
     assert "Tokyo" in prompt
     assert "2026-05-01" in prompt
     assert "2026-05-02" in prompt
@@ -524,6 +560,10 @@ def test_itinerary_prompt_builder_contains_contract_terms() -> None:
     assert "warnings" in prompt
     assert "Do not force impossible places" in prompt
     assert "unrealistic transportation" in prompt
+    assert "check whether requested places are compatible with destination" in prompt
+    assert "outside the destination area" in prompt
+    assert "over-packed schedules" in prompt
+    assert "warnings and explanation must not contain internal field names" in prompt
 
 
 def test_settlement_prompt_builder_contains_json_only_contract() -> None:

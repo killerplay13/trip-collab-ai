@@ -12,6 +12,7 @@ from app.schemas.ai import (
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
+    ItineraryQualityChecks,
     ReceiptParseDraft,
     ReceiptParseRequest,
     SettlementExplainRequest,
@@ -144,6 +145,7 @@ class AIService:
             source="fallback",
             fallback=True,
             fallback_reason=fallback_reason,
+            quality_checks=ItineraryQualityChecks(needs_user_review=True),
         )
 
     def _settlement_fallback(self, language: str = "en") -> SettlementExplanation:

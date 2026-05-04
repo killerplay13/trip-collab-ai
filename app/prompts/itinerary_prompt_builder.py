@@ -60,7 +60,14 @@ Return exactly this JSON shape:
     }}
   ],
   "explanation": "...",
-  "warnings": []
+  "warnings": [],
+  "quality_checks": {{
+    "has_out_of_scope_place": false,
+    "has_unrealistic_transport": false,
+    "has_time_conflict": false,
+    "has_duplicate_place": false,
+    "needs_user_review": false
+  }}
 }}
 
 Rules:
@@ -83,7 +90,16 @@ Rules:
 - If avoiding duplicates makes the itinerary sparse, explain this in warnings.
 - If avoid_duplicate_places is false, duplicates are allowed when useful, but still mention likely duplication in warnings.
 - Write user-friendly warnings and explanation in natural language for travelers.
-- Do not mention internal field names in warnings or explanation, including avoid_duplicate_places, existing_itinerary, must_visit_places, fallback_reason, JSON field, or flag.
+- warnings and explanation must not contain internal field names.
+- Do not mention internal field names in warnings or explanation, including avoid_duplicate_places, existing_itinerary, must_visit_places, fallback_reason, quality_checks, JSON field, or flag.
 - If a place is skipped to avoid duplication, say naturally that it is already arranged on another date, that you avoided adding it again this time, and that the user can manually add it or regenerate with adjusted needs.
 - Do not write technical explanations such as "because avoid_duplicate_places is true".
+- Before generating items, check whether requested places are compatible with destination and the trip area.
+- If a requested must-visit place or note clearly refers to a place outside the destination area, do not force it into items. Mention it in user-friendly warnings, set quality_checks.has_out_of_scope_place to true, and set quality_checks.needs_user_review to true.
+- Do not describe cross-country or long-distance travel as walking, taxi, local bus, or short local transit.
+- If a requested place requires a flight, long-distance rail, or major transfer and is not suitable for the selected date, do not include it as a normal itinerary item. Mention it in warnings and set quality_checks.has_unrealistic_transport to true.
+- Avoid impossible or over-packed schedules. If timing is uncertain, use null times and mention uncertainty in note or warnings.
+- If time arrangement looks tight or uncertain, set quality_checks.needs_user_review to true. Set quality_checks.has_time_conflict to true only when an obvious conflict exists.
+- If existing_itinerary already contains the same or similar place, avoid duplicating it, mention it naturally in warnings, and set quality_checks.has_duplicate_place to true.
+- If any quality check flag is true, set quality_checks.needs_user_review to true.
 """.strip()
