@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,10 +9,12 @@ from pydantic import ValidationError
 from app.config import Settings, get_settings
 from app.main import app
 from app.prompts.itinerary_prompt_builder import build_itinerary_generate_prompt
+from app.prompts.settlement_prompt import build_settlement_prompt
 from app.providers.base import AIProvider
 from app.providers.exceptions import (
     AIProviderError,
     ProviderHTTPError,
+    ProviderInvalidJSONError,
     ProviderInvalidResponseError,
     ProviderQuotaExceededError,
     ProviderRateLimitError,
@@ -47,6 +50,24 @@ def itinerary_request_payload() -> dict[str, object]:
         "avoid_places": ["crowded nightlife"],
         "notes": "Prefer public transit.",
         "language": "en",
+    }
+
+
+def settlement_request_payload() -> dict[str, object]:
+    return {
+        "trip_id": "trip_123",
+        "currency": "TWD",
+        "members": [
+            {"member_id": "alice", "name": "Alice"},
+            {"member_id": "bob", "name": "Bob"},
+        ],
+        "balances": [
+            {"member_id": "alice", "net_balance": -300.0},
+            {"member_id": "bob", "net_balance": 300.0},
+        ],
+        "transactions": [
+            {"from": "alice", "to": "bob", "amount": 300.0},
+        ],
     }
 
 
@@ -114,14 +135,16 @@ def test_itinerary_draft_item_rejects_zero_sort_order() -> None:
 def test_explain_settlement_endpoint() -> None:
     response = client.post(
         "/ai/settlement/explain",
-        json={
-            "trip_id": "trip_123",
-            "expenses_summary": {"currency": "TWD", "total": 3000},
-        },
+        json=settlement_request_payload(),
     )
 
     assert response.status_code == 200
-    assert response.json()["success"] is True
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"]
+    assert isinstance(body["data"]["steps"], list)
+    assert isinstance(body["data"]["tips"], list)
+    assert "Alice should pay Bob 300 TWD." in body["data"]["steps"]
 
 
 def test_parse_receipt_endpoint() -> None:
@@ -145,7 +168,7 @@ class SlowProvider(AIProvider):
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
         await asyncio.sleep(0.01)
-        return SettlementExplanation(summary="Too slow", details=[])
+        return SettlementExplanation(summary="Too slow", steps=[], tips=[])
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
         await asyncio.sleep(0.01)
@@ -185,6 +208,13 @@ class ProviderErrorProvider(AIProvider):
         raise self.error
 
 
+@pytest.fixture(autouse=True)
+def reset_settings_override() -> Callable[[], None]:
+    app.dependency_overrides[get_settings] = lambda: Settings(ai_provider="mock")
+    yield
+    app.dependency_overrides[get_settings] = lambda: Settings(ai_provider="mock")
+
+
 @pytest.mark.asyncio
 async def test_generate_itinerary_timeout_returns_fallback() -> None:
     service = AIService(SlowProvider(), Settings(llm_timeout_seconds=0))
@@ -209,6 +239,55 @@ async def test_generate_itinerary_provider_exception_returns_fallback() -> None:
     assert result.fallback_reason == "provider_error"
     assert result.items[0].title == "Tokyo fallback draft"
     assert "does not write to DB" in result.explanation
+
+
+def test_explain_settlement_timeout_returns_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def slow_explain(
+        self: MockAIProvider, request: SettlementExplainRequest
+    ) -> SettlementExplanation:
+        await asyncio.sleep(0.01)
+        return SettlementExplanation(summary="Too slow", steps=[], tips=[])
+
+    monkeypatch.setattr(MockAIProvider, "explain_settlement", slow_explain)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        ai_provider="mock",
+        llm_timeout_seconds=0,
+    )
+
+    response = client.post("/ai/settlement/explain", json=settlement_request_payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"] == "AI explanation temporarily unavailable"
+    assert body["data"]["steps"] == ["Please refer to backend settlement result"]
+    assert body["data"]["tips"] == ["AI service failed or timed out"]
+
+
+def test_explain_settlement_exception_returns_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def broken_explain(
+        self: MockAIProvider, request: SettlementExplainRequest
+    ) -> SettlementExplanation:
+        raise Exception("provider failed")
+
+    monkeypatch.setattr(MockAIProvider, "explain_settlement", broken_explain)
+
+    response = client.post("/ai/settlement/explain", json=settlement_request_payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"] == "AI explanation temporarily unavailable"
+    assert body["data"]["steps"] == ["Please refer to backend settlement result"]
+    assert body["data"]["tips"] == ["AI service failed or timed out"]
 
 
 @pytest.mark.asyncio
@@ -245,6 +324,7 @@ async def test_provider_error_fallback_writes_structured_log(
 @pytest.mark.parametrize(
     ("error", "fallback_reason"),
     [
+        (ProviderInvalidJSONError("invalid json"), "invalid_json"),
         (ProviderInvalidResponseError("invalid response"), "invalid_response"),
         (ProviderRateLimitError("rate limited"), "rate_limited"),
         (ProviderQuotaExceededError("quota exceeded"), "quota_exceeded"),
@@ -282,3 +362,20 @@ def test_itinerary_prompt_builder_contains_contract_terms() -> None:
     assert "Tokyo" in prompt
     assert "2026-05-01" in prompt
     assert "2026-05-02" in prompt
+
+
+def test_settlement_prompt_builder_contains_json_only_contract() -> None:
+    request = SettlementExplainRequest(**settlement_request_payload())
+
+    prompt = build_settlement_prompt(request)
+
+    assert "travel settlement explanation" in prompt
+    assert "must not recalculate any balance or amount" in prompt
+    assert "must not modify any amount" in prompt
+    assert "must not add any transaction" in prompt
+    assert "Return JSON only" in prompt
+    assert "Do not include markdown" in prompt
+    assert '"summary"' in prompt
+    assert '"steps"' in prompt
+    assert '"tips"' in prompt
+    assert '"trip_id": "trip_123"' in prompt

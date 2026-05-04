@@ -6,10 +6,12 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.prompts.itinerary_prompt_builder import build_itinerary_generate_prompt
+from app.prompts.settlement_prompt import build_settlement_prompt
 from app.providers.base import AIProvider
 from app.providers.exceptions import (
     MissingProviderConfigError,
     ProviderHTTPError,
+    ProviderInvalidJSONError,
     ProviderInvalidResponseError,
     ProviderQuotaExceededError,
     ProviderRateLimitError,
@@ -38,18 +40,14 @@ class OpenRouterProvider(AIProvider):
         prompt = build_itinerary_generate_prompt(request)
         response = await self._post_chat_completion(prompt)
         content = self._extract_content(response)
-
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ProviderInvalidResponseError("OpenRouter returned invalid JSON.") from exc
+        payload = self._parse_json_content(content)
 
         payload["source"] = "openrouter"
         payload["fallback"] = False
         payload["fallback_reason"] = None
 
         try:
-            return ItineraryGenerateData(**payload)
+            return ItineraryGenerateData.model_validate(payload)
         except ValidationError as exc:
             raise ProviderInvalidResponseError(
                 "OpenRouter response does not match itinerary schema."
@@ -58,10 +56,20 @@ class OpenRouterProvider(AIProvider):
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
-        # Phase 1 will implement the real OpenRouter call with timeout handling,
-        # rate limit handling, quota exceeded handling, invalid JSON recovery,
-        # and fallback behavior.
-        raise NotImplementedError("OpenRouterProvider is planned for Phase 1.")
+        if not self.settings.openrouter_api_key.strip():
+            raise MissingProviderConfigError("OpenRouter API key is required.")
+
+        prompt = build_settlement_prompt(request)
+        response = await self._post_chat_completion(prompt)
+        content = self._extract_content(response)
+        payload = self._parse_json_content(content)
+
+        try:
+            return SettlementExplanation.model_validate(payload)
+        except ValidationError as exc:
+            raise ProviderInvalidResponseError(
+                "OpenRouter response does not match settlement explanation schema."
+            ) from exc
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
         # Phase 1 will implement the real OpenRouter call with timeout handling,
@@ -127,6 +135,17 @@ class OpenRouterProvider(AIProvider):
             raise ProviderInvalidResponseError("OpenRouter response content is empty.")
 
         return content
+
+    def _parse_json_content(self, content: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ProviderInvalidJSONError("OpenRouter returned invalid JSON.") from exc
+
+        if not isinstance(payload, dict):
+            raise ProviderInvalidResponseError("OpenRouter content payload must be a JSON object.")
+
+        return payload
 
     def _provider_http_error(self, exc: httpx.HTTPStatusError) -> Exception:
         status_code = exc.response.status_code

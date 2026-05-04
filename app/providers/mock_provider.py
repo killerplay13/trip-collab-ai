@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from app.providers.base import AIProvider
+from app.prompts.settlement_prompt import build_settlement_prompt
 from app.schemas.ai import (
     ItineraryDraftItem,
     ItineraryGenerateData,
@@ -46,14 +47,23 @@ class MockAIProvider(AIProvider):
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
+        _ = build_settlement_prompt(request)
+        member_names = {member.member_id: member.name for member in request.members}
+        steps = [
+            (
+                f"{member_names.get(transaction.from_, transaction.from_)} should pay "
+                f"{member_names.get(transaction.to, transaction.to)} "
+                f"{transaction.amount:g} {request.currency}."
+            )
+            for transaction in request.transactions
+        ]
+
         return SettlementExplanation(
-            summary=(
-                "Draft settlement explanation only. The AI service does not write to DB or apply transfers."
-            ),
-            details=[
-                f"Trip {request.trip_id} expenses summary was received for explanation.",
-                "Spring Boot remains responsible for permissions, business rules, and persistence.",
-                "This mock result is safe to display as guidance before user confirmation.",
+            summary="Settlement explanation generated successfully.",
+            steps=steps,
+            tips=[
+                "Complete the listed payments to settle the trip balance.",
+                "Amounts are based on backend settlement results.",
             ],
         )
 

@@ -9,12 +9,13 @@ from app.providers import openrouter_provider
 from app.providers.exceptions import (
     MissingProviderConfigError,
     ProviderHTTPError,
+    ProviderInvalidJSONError,
     ProviderInvalidResponseError,
     ProviderQuotaExceededError,
     ProviderRateLimitError,
 )
 from app.providers.openrouter_provider import OpenRouterProvider
-from app.schemas.ai import ItineraryGenerateRequest
+from app.schemas.ai import ItineraryGenerateRequest, SettlementExplainRequest
 
 
 def itinerary_request() -> ItineraryGenerateRequest:
@@ -39,6 +40,24 @@ def openrouter_settings(api_key: str = "test-key") -> Settings:
     )
 
 
+def settlement_request() -> SettlementExplainRequest:
+    return SettlementExplainRequest(
+        trip_id="trip_123",
+        currency="TWD",
+        members=[
+            {"member_id": "alice", "name": "Alice"},
+            {"member_id": "bob", "name": "Bob"},
+        ],
+        balances=[
+            {"member_id": "alice", "net_balance": -300.0},
+            {"member_id": "bob", "net_balance": 300.0},
+        ],
+        transactions=[
+            {"from": "alice", "to": "bob", "amount": 300.0},
+        ],
+    )
+
+
 def valid_content() -> str:
     return json.dumps(
         {
@@ -56,6 +75,16 @@ def valid_content() -> str:
             ],
             "explanation": "A short Tokyo itinerary.",
             "warnings": [],
+        }
+    )
+
+
+def valid_settlement_content() -> str:
+    return json.dumps(
+        {
+            "summary": "Alice needs to pay Bob to settle the trip.",
+            "steps": ["Alice should pay Bob 300 TWD."],
+            "tips": ["Amounts are based on backend settlement results."],
         }
     )
 
@@ -241,3 +270,65 @@ async def test_generate_itinerary_missing_api_key_raises_missing_config() -> Non
 
     with pytest.raises(MissingProviderConfigError):
         await provider.generate_itinerary(itinerary_request())
+
+
+@pytest.mark.asyncio
+async def test_explain_settlement_parses_valid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": valid_settlement_content()}}]},
+        )
+
+    requests = install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    result = await provider.explain_settlement(settlement_request())
+
+    assert result.summary == "Alice needs to pay Bob to settle the trip."
+    assert result.steps == ["Alice should pay Bob 300 TWD."]
+    assert result.tips == ["Amounts are based on backend settlement results."]
+
+    request = requests[0]
+    body = json.loads(request.content)
+    assert body["messages"][1]["role"] == "user"
+    assert "travel settlement explanation" in body["messages"][1]["content"]
+    assert '"summary"' in body["messages"][1]["content"]
+    assert '"transactions"' in body["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_explain_settlement_invalid_json_raises_provider_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "not json"}}]},
+        )
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderInvalidJSONError):
+        await provider.explain_settlement(settlement_request())
+
+
+@pytest.mark.asyncio
+async def test_explain_settlement_schema_invalid_raises_provider_invalid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        invalid_content = json.dumps({"summary": "ok", "steps": []})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": invalid_content}}]},
+        )
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderInvalidResponseError):
+        await provider.explain_settlement(settlement_request())

@@ -18,6 +18,10 @@ class ProviderInvalidResponseError(AIProviderError):
     fallback_reason = "invalid_response"
 
 
+class ProviderInvalidJSONError(ProviderInvalidResponseError):
+    fallback_reason = "invalid_json"
+
+
 class ProviderHTTPError(AIProviderError):
     fallback_reason = "provider_http_error"
 

@@ -148,11 +148,9 @@ class AIService:
 
     def _settlement_fallback(self) -> SettlementExplanation:
         return SettlementExplanation(
-            summary="AI explanation is temporarily unavailable.",
-            details=[
-                "Settlement calculation should still be handled by Spring Boot.",
-                "This fallback only explains that AI provider failed or timed out.",
-            ],
+            summary="AI explanation temporarily unavailable",
+            steps=["Please refer to backend settlement result"],
+            tips=["AI service failed or timed out"],
         )
 
     def _receipt_fallback(self) -> ReceiptParseDraft:

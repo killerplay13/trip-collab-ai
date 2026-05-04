@@ -1,7 +1,7 @@
 from datetime import date, time
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ItineraryGenerateRequest(BaseModel):
@@ -53,14 +53,36 @@ class ItineraryGenerateData(BaseModel):
     fallback_reason: Optional[str] = None
 
 
+class SettlementMember(BaseModel):
+    member_id: str
+    name: str
+
+
+class SettlementBalance(BaseModel):
+    member_id: str
+    net_balance: float
+
+
+class SettlementTransaction(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+    amount: float
+
+
 class SettlementExplainRequest(BaseModel):
     trip_id: str
-    expenses_summary: dict[str, Any]
+    currency: str
+    members: list[SettlementMember]
+    balances: list[SettlementBalance]
+    transactions: list[SettlementTransaction]
 
 
 class SettlementExplanation(BaseModel):
     summary: str
-    details: list[str]
+    steps: list[str]
+    tips: list[str]
 
 
 class ReceiptParseRequest(BaseModel):
