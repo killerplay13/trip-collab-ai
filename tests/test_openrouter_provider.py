@@ -40,22 +40,51 @@ def openrouter_settings(api_key: str = "test-key") -> Settings:
     )
 
 
-def settlement_request() -> SettlementExplainRequest:
-    return SettlementExplainRequest(
-        trip_id="trip_123",
-        currency="TWD",
-        members=[
+def settlement_request(
+    language: str = "en",
+    include_member_summaries: bool = False,
+) -> SettlementExplainRequest:
+    payload: dict[str, object] = {
+        "trip_id": "trip_123",
+        "currency": "TWD",
+        "members": [
             {"member_id": "alice", "name": "Alice"},
             {"member_id": "bob", "name": "Bob"},
         ],
-        balances=[
+        "balances": [
             {"member_id": "alice", "net_balance": -300.0},
             {"member_id": "bob", "net_balance": 300.0},
         ],
-        transactions=[
+        "transactions": [
             {"from": "alice", "to": "bob", "amount": 300.0},
         ],
-    )
+        "language": language,
+    }
+    if include_member_summaries:
+        payload.update(
+            {
+                "total_expense": 900.0,
+                "member_count": 2,
+                "transaction_count": 1,
+                "member_summaries": [
+                    {
+                        "member_id": "alice",
+                        "name": "Alice",
+                        "paid_total": 900.0,
+                        "owed_total": 450.0,
+                        "net_balance": 450.0,
+                    },
+                    {
+                        "member_id": "bob",
+                        "name": "Bob",
+                        "paid_total": 0.0,
+                        "owed_total": 450.0,
+                        "net_balance": -450.0,
+                    },
+                ],
+            }
+        )
+    return SettlementExplainRequest(**payload)
 
 
 def valid_content() -> str:
@@ -148,10 +177,9 @@ async def test_generate_itinerary_parses_valid_response_and_sends_expected_reque
     body = json.loads(request.content)
     assert body["model"] == "test-model"
     assert body["temperature"] == 0.4
-    assert body["messages"][0] == {
-        "role": "system",
-        "content": "你是旅遊行程規劃 AI，只能輸出 JSON",
-    }
+    assert body["messages"][0]["role"] == "system"
+    assert "You are a travel assistant AI" in body["messages"][0]["content"]
+    assert "output JSON only" in body["messages"][0]["content"]
     assert body["messages"][1]["role"] == "user"
     assert "Tokyo" in body["messages"][1]["content"]
 
@@ -297,6 +325,50 @@ async def test_explain_settlement_parses_valid_response(
     assert "travel settlement explanation" in body["messages"][1]["content"]
     assert '"summary"' in body["messages"][1]["content"]
     assert '"transactions"' in body["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_explain_settlement_prompt_contains_language_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": valid_settlement_content()}}]},
+        )
+
+    requests = install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    await provider.explain_settlement(settlement_request(language="zh-TW"))
+
+    body = json.loads(requests[0].content)
+    user_prompt = body["messages"][1]["content"]
+    assert "Respond entirely in zh-TW" in user_prompt
+    assert "Traditional Chinese" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_explain_settlement_with_member_summaries_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": valid_settlement_content()}}]},
+        )
+
+    requests = install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    await provider.explain_settlement(settlement_request(include_member_summaries=True))
+
+    body = json.loads(requests[0].content)
+    user_prompt = body["messages"][1]["content"]
+    assert "member_summaries" in user_prompt
+    assert "paid_total" in user_prompt
+    assert "owed_total" in user_prompt
+    assert "net_balance" in user_prompt
 
 
 @pytest.mark.asyncio

@@ -71,6 +71,35 @@ def settlement_request_payload() -> dict[str, object]:
     }
 
 
+def settlement_request_with_member_summaries() -> dict[str, object]:
+    payload = settlement_request_payload()
+    payload.update(
+        {
+            "language": "en",
+            "total_expense": 900.0,
+            "member_count": 2,
+            "transaction_count": 1,
+            "member_summaries": [
+                {
+                    "member_id": "alice",
+                    "name": "Alice",
+                    "paid_total": 900.0,
+                    "owed_total": 450.0,
+                    "net_balance": 450.0,
+                },
+                {
+                    "member_id": "bob",
+                    "name": "Bob",
+                    "paid_total": 0.0,
+                    "owed_total": 450.0,
+                    "net_balance": -450.0,
+                },
+            ],
+        }
+    )
+    return payload
+
+
 def test_generate_itinerary_endpoint() -> None:
     response = client.post(
         "/ai/itinerary/generate",
@@ -145,6 +174,72 @@ def test_explain_settlement_endpoint() -> None:
     assert isinstance(body["data"]["steps"], list)
     assert isinstance(body["data"]["tips"], list)
     assert "Alice should pay Bob 300 TWD." in body["data"]["steps"]
+
+
+def test_explain_settlement_old_request_backward_compatible() -> None:
+    response = client.post(
+        "/ai/settlement/explain",
+        json=settlement_request_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"]
+    assert isinstance(body["data"]["steps"], list)
+
+
+def test_explain_settlement_with_language_zh_tw() -> None:
+    payload = settlement_request_payload()
+    payload["language"] = "zh-TW"
+
+    response = client.post("/ai/settlement/explain", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert "本次旅程" in body["data"]["summary"]
+    assert "需支付" in body["data"]["steps"][0]
+
+
+def test_explain_settlement_with_language_en() -> None:
+    payload = settlement_request_payload()
+    payload["language"] = "en"
+
+    response = client.post("/ai/settlement/explain", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert "should pay" in body["data"]["steps"][0]
+
+
+def test_explain_settlement_with_member_summaries() -> None:
+    response = client.post(
+        "/ai/settlement/explain",
+        json=settlement_request_with_member_summaries(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    summary = body["data"]["summary"]
+    assert body["success"] is True
+    assert "Alice" in summary
+    assert "paid the most upfront" in summary
+    assert len(summary) > len("Settlement explanation generated successfully.")
+
+
+def test_explain_settlement_empty_transactions_all_settled() -> None:
+    payload = settlement_request_payload()
+    payload["transactions"] = []
+
+    response = client.post("/ai/settlement/explain", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["steps"] == []
+    assert "No settlement transfers are needed" in body["data"]["summary"]
 
 
 def test_parse_receipt_endpoint() -> None:
@@ -290,6 +385,35 @@ def test_explain_settlement_exception_returns_fallback(
     assert body["data"]["tips"] == ["AI service failed or timed out"]
 
 
+def test_explain_settlement_timeout_fallback_zh_tw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def slow_explain(
+        self: MockAIProvider, request: SettlementExplainRequest
+    ) -> SettlementExplanation:
+        await asyncio.sleep(0.01)
+        return SettlementExplanation(summary="Too slow", steps=[], tips=[])
+
+    monkeypatch.setattr(MockAIProvider, "explain_settlement", slow_explain)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        ai_provider="mock",
+        llm_timeout_seconds=0,
+    )
+    payload = settlement_request_payload()
+    payload["language"] = "zh-TW"
+
+    response = client.post("/ai/settlement/explain", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"] == "AI 說明暫時無法取得"
+    assert body["data"]["steps"] == ["請參考後端結算結果進行轉帳"]
+    assert body["data"]["tips"] == ["AI 服務暫時失敗或逾時，請稍後再試"]
+
+
 @pytest.mark.asyncio
 async def test_timeout_fallback_writes_structured_log(caplog: pytest.LogCaptureFixture) -> None:
     service = AIService(SlowProvider(), Settings(llm_timeout_seconds=0))
@@ -379,3 +503,36 @@ def test_settlement_prompt_builder_contains_json_only_contract() -> None:
     assert '"steps"' in prompt
     assert '"tips"' in prompt
     assert '"trip_id": "trip_123"' in prompt
+
+
+def test_settlement_prompt_contains_language_instruction() -> None:
+    payload = settlement_request_payload()
+    payload["language"] = "zh-TW"
+    request = SettlementExplainRequest(**payload)
+
+    prompt = build_settlement_prompt(request)
+
+    assert "Respond entirely in zh-TW" in prompt
+    assert "Traditional Chinese" in prompt
+
+
+def test_settlement_prompt_contains_member_summaries() -> None:
+    request = SettlementExplainRequest(**settlement_request_with_member_summaries())
+
+    prompt = build_settlement_prompt(request)
+
+    assert "member_summaries" in prompt
+    assert "paid_total" in prompt
+    assert "owed_total" in prompt
+    assert "net_balance" in prompt
+
+
+def test_settlement_prompt_still_forbids_recalculation() -> None:
+    request = SettlementExplainRequest(**settlement_request_with_member_summaries())
+
+    prompt = build_settlement_prompt(request)
+
+    assert "must not recalculate" in prompt
+    assert "must not" in prompt
+    assert "derive" in prompt
+    assert "Do not use total_expense" in prompt

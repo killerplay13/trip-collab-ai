@@ -88,7 +88,10 @@ class OpenRouterProvider(AIProvider):
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是旅遊行程規劃 AI，只能輸出 JSON",
+                    "content": (
+                        "You are a travel assistant AI. "
+                        "Follow the user prompt exactly and output JSON only."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],

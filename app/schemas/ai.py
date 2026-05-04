@@ -71,12 +71,34 @@ class SettlementTransaction(BaseModel):
     amount: float
 
 
+class SettlementMemberSummary(BaseModel):
+    member_id: str
+    name: str
+    paid_total: float
+    owed_total: float
+    net_balance: float
+
+
 class SettlementExplainRequest(BaseModel):
     trip_id: str
     currency: str
     members: list[SettlementMember]
     balances: list[SettlementBalance]
     transactions: list[SettlementTransaction]
+    language: str = Field(default="en")
+    total_expense: float | None = Field(default=None)
+    member_count: int | None = Field(default=None)
+    transaction_count: int | None = Field(default=None)
+    member_summaries: list[SettlementMemberSummary] = Field(default_factory=list)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def default_blank_language(cls, value: object) -> str:
+        if value is None:
+            return "en"
+        if isinstance(value, str) and not value.strip():
+            return "en"
+        return str(value)
 
 
 class SettlementExplanation(BaseModel):

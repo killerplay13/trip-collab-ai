@@ -43,7 +43,7 @@ class AIService:
         return await self._execute_with_fallback(
             "settlement.explain",
             self.provider.explain_settlement(request),
-            lambda fallback_reason: self._settlement_fallback(),
+            lambda fallback_reason: self._settlement_fallback(request.language),
         )
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
@@ -146,7 +146,14 @@ class AIService:
             fallback_reason=fallback_reason,
         )
 
-    def _settlement_fallback(self) -> SettlementExplanation:
+    def _settlement_fallback(self, language: str = "en") -> SettlementExplanation:
+        if language.startswith("zh"):
+            return SettlementExplanation(
+                summary="AI 說明暫時無法取得",
+                steps=["請參考後端結算結果進行轉帳"],
+                tips=["AI 服務暫時失敗或逾時，請稍後再試"],
+            )
+
         return SettlementExplanation(
             summary="AI explanation temporarily unavailable",
             steps=["Please refer to backend settlement result"],
