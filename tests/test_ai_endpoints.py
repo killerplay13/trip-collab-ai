@@ -21,6 +21,7 @@ from app.providers.exceptions import (
 )
 from app.schemas.ai import (
     ExistingItineraryItem,
+    ExpenseInsightRequest,
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
@@ -100,6 +101,15 @@ def settlement_request_with_member_summaries() -> dict[str, object]:
         }
     )
     return payload
+
+
+def expense_insight_request_payload() -> dict[str, object]:
+    return {
+        "trip_id": "trip_123",
+        "language": "zh-TW",
+        "budget_amount": 20000,
+        "remaining_days": 2,
+    }
 
 
 def test_generate_itinerary_endpoint() -> None:
@@ -309,6 +319,42 @@ def test_parse_receipt_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json()["success"] is True
+
+
+def test_expense_insight_endpoint_returns_mock_data() -> None:
+    response = client.post(
+        "/ai/expenses/insight",
+        json=expense_insight_request_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["error"] is None
+    assert body["data"]["summary"] == "目前這趟旅行已有多筆支出紀錄，餐飲與住宿可能是主要花費來源。"
+    assert body["data"]["highlights"] == [
+        "目前已有 expense 資料可用於花費分析。",
+        "AI insight flow 已成功建立。",
+    ]
+    assert body["data"]["warnings"] == [
+        "這是 mock 分析，尚未使用真實 expense context。",
+    ]
+    assert body["data"]["suggestions"] == [
+        "下一階段可接入真實 expense summary，提供更精準的預算建議。",
+    ]
+    assert body["data"]["fallback"] is False
+    assert body["data"]["fallbackReason"] is None
+
+
+def test_expense_insight_request_defaults_blank_language() -> None:
+    request = ExpenseInsightRequest(
+        trip_id="trip_123",
+        language="  ",
+    )
+
+    assert request.language == "zh-TW"
+    assert request.budget_amount is None
+    assert request.remaining_days is None
 
 
 class SlowProvider(AIProvider):

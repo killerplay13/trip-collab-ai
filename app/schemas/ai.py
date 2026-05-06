@@ -125,6 +125,31 @@ class SettlementExplanation(BaseModel):
     tips: list[str]
 
 
+class ExpenseInsightRequest(BaseModel):
+    trip_id: str
+    language: str = "zh-TW"
+    budget_amount: float | None = None
+    remaining_days: int | None = None
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def default_blank_language(cls, value: object) -> str:
+        if value is None:
+            return "zh-TW"
+        if isinstance(value, str) and not value.strip():
+            return "zh-TW"
+        return str(value)
+
+
+class ExpenseInsightData(BaseModel):
+    summary: str
+    highlights: list[str]
+    warnings: list[str]
+    suggestions: list[str]
+    fallback: bool = False
+    fallbackReason: str | None = None
+
+
 class ReceiptParseRequest(BaseModel):
     image_url: str | None = None
     raw_text: str | None = None

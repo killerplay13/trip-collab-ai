@@ -5,6 +5,8 @@ from app.providers.base import AIProvider
 from app.providers.mock_provider import MockAIProvider
 from app.providers.openrouter_provider import OpenRouterProvider
 from app.schemas.ai import (
+    ExpenseInsightData,
+    ExpenseInsightRequest,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
@@ -59,6 +61,32 @@ async def explain_settlement(
 ) -> ApiResponse[SettlementExplanation]:
     explanation = await service.explain_settlement(request)
     return ApiResponse(success=True, data=explanation, error=None)
+
+
+@router.post(
+    "/expenses/insight",
+    response_model=ApiResponse[ExpenseInsightData],
+)
+async def expense_insight(
+    request: ExpenseInsightRequest,
+) -> ApiResponse[ExpenseInsightData]:
+    _ = request
+    insight = ExpenseInsightData(
+        summary="目前這趟旅行已有多筆支出紀錄，餐飲與住宿可能是主要花費來源。",
+        highlights=[
+            "目前已有 expense 資料可用於花費分析。",
+            "AI insight flow 已成功建立。",
+        ],
+        warnings=[
+            "這是 mock 分析，尚未使用真實 expense context。",
+        ],
+        suggestions=[
+            "下一階段可接入真實 expense summary，提供更精準的預算建議。",
+        ],
+        fallback=False,
+        fallbackReason=None,
+    )
+    return ApiResponse(success=True, data=insight, error=None)
 
 
 @router.post(
