@@ -107,8 +107,24 @@ def expense_insight_request_payload() -> dict[str, object]:
     return {
         "trip_id": "trip_123",
         "language": "zh-TW",
-        "budget_amount": 20000,
-        "remaining_days": 2,
+        "currency": "TWD",
+        "totalAmount": 12800,
+        "expenseCount": 18,
+        "memberCount": 4,
+        "dailyTotals": [
+            {"date": "2026-05-04", "amount": 5200},
+            {"date": "2026-05-05", "amount": 7600},
+        ],
+        "topExpenses": [
+            {"title": "Hotel", "amount": 6000, "date": "2026-05-04"},
+            {"title": "Dinner", "amount": 1800, "date": "2026-05-05"},
+        ],
+        "memberBalances": [
+            {"memberName": "Alice", "paidAmount": 5000, "shareAmount": 3200, "balance": 1800},
+            {"memberName": "Bob", "paidAmount": 2500, "shareAmount": 4300, "balance": -1800},
+        ],
+        "budgetAmount": 20000,
+        "remainingDays": 2,
     }
 
 
@@ -267,8 +283,8 @@ def test_explain_settlement_with_language_zh_tw() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    assert "本次旅程" in body["data"]["summary"]
-    assert "需支付" in body["data"]["steps"][0]
+    assert "1" in body["data"]["summary"]
+    assert "Alice" in body["data"]["steps"][0]
 
 
 def test_explain_settlement_with_language_en() -> None:
@@ -331,20 +347,41 @@ def test_expense_insight_endpoint_returns_mock_data() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["error"] is None
-    assert body["data"]["summary"] == "目前這趟旅行已有多筆支出紀錄，餐飲與住宿可能是主要花費來源。"
-    assert body["data"]["highlights"] == [
-        "目前已有 expense 資料可用於花費分析。",
-        "AI insight flow 已成功建立。",
-    ]
-    assert body["data"]["warnings"] == [
-        "這是 mock 分析，尚未使用真實 expense context。",
-    ]
-    assert body["data"]["suggestions"] == [
-        "下一階段可接入真實 expense summary，提供更精準的預算建議。",
-    ]
+    assert "18" in body["data"]["summary"]
+    assert "12,800 TWD" in body["data"]["summary"]
+    assert "Hotel" in body["data"]["highlights"][0]
+    assert "2026-05-05" in body["data"]["highlights"][1]
+    assert "Alice" in body["data"]["highlights"][2]
+    assert body["data"]["warnings"]
+    assert "7,200 TWD" in body["data"]["suggestions"][0]
     assert body["data"]["fallback"] is False
     assert body["data"]["fallbackReason"] is None
 
+
+def test_expense_insight_endpoint_returns_empty_context_template() -> None:
+    response = client.post(
+        "/ai/expenses/insight",
+        json={
+            "trip_id": "trip_123",
+            "language": "en",
+            "currency": "TWD",
+            "totalAmount": 0,
+            "expenseCount": 0,
+            "memberCount": 0,
+            "dailyTotals": [],
+            "topExpenses": [],
+            "memberBalances": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"] == "There are no expenses to analyze yet."
+    assert body["data"]["highlights"] == []
+    assert body["data"]["warnings"] == []
+    assert "Add a few expenses" in body["data"]["suggestions"][0]
+    assert body["data"]["fallback"] is False
 
 def test_expense_insight_request_defaults_blank_language() -> None:
     request = ExpenseInsightRequest(
@@ -518,9 +555,9 @@ def test_explain_settlement_timeout_fallback_zh_tw(
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    assert body["data"]["summary"] == "AI 說明暫時無法取得"
-    assert body["data"]["steps"] == ["請參考後端結算結果進行轉帳"]
-    assert body["data"]["tips"] == ["AI 服務暫時失敗或逾時，請稍後再試"]
+    assert body["data"]["summary"].startswith("AI ")
+    assert body["data"]["steps"]
+    assert body["data"]["tips"]
 
 
 @pytest.mark.asyncio

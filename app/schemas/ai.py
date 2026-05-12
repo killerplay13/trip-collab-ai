@@ -1,7 +1,8 @@
+import datetime as dt
 from datetime import date, time
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ExistingItineraryItem(BaseModel):
@@ -128,8 +129,24 @@ class SettlementExplanation(BaseModel):
 class ExpenseInsightRequest(BaseModel):
     trip_id: str
     language: str = "zh-TW"
-    budget_amount: float | None = None
-    remaining_days: int | None = None
+    currency: str = "TWD"
+    total_amount: float = Field(default=0, validation_alias=AliasChoices("totalAmount", "total_amount"))
+    expense_count: int = Field(default=0, validation_alias=AliasChoices("expenseCount", "expense_count"))
+    member_count: int = Field(default=0, validation_alias=AliasChoices("memberCount", "member_count"))
+    daily_totals: list["ExpenseDailyTotal"] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("dailyTotals", "daily_totals"),
+    )
+    top_expenses: list["ExpenseTopExpense"] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("topExpenses", "top_expenses"),
+    )
+    member_balances: list["ExpenseMemberBalance"] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("memberBalances", "member_balances"),
+    )
+    budget_amount: float | None = Field(default=None, validation_alias=AliasChoices("budgetAmount", "budget_amount"))
+    remaining_days: int | None = Field(default=None, validation_alias=AliasChoices("remainingDays", "remaining_days"))
 
     @field_validator("language", mode="before")
     @classmethod
@@ -139,6 +156,24 @@ class ExpenseInsightRequest(BaseModel):
         if isinstance(value, str) and not value.strip():
             return "zh-TW"
         return str(value)
+
+
+class ExpenseDailyTotal(BaseModel):
+    date: dt.date
+    amount: float
+
+
+class ExpenseTopExpense(BaseModel):
+    title: str
+    amount: float
+    date: Optional[dt.date] = None
+
+
+class ExpenseMemberBalance(BaseModel):
+    member_name: str = Field(validation_alias=AliasChoices("memberName", "member_name"))
+    paid_amount: float = Field(validation_alias=AliasChoices("paidAmount", "paid_amount"))
+    share_amount: float = Field(validation_alias=AliasChoices("shareAmount", "share_amount"))
+    balance: float
 
 
 class ExpenseInsightData(BaseModel):
