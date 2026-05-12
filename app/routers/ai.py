@@ -70,62 +70,114 @@ async def explain_settlement(
 async def expense_insight(
     request: ExpenseInsightRequest,
 ) -> ApiResponse[ExpenseInsightData]:
+    lang = request.language or "zh-TW"
+    is_zh = lang.startswith("zh")
     currency = request.currency or "TWD"
     total_amount = request.total_amount or 0
     expense_count = request.expense_count or 0
 
     if expense_count == 0:
-        insight = ExpenseInsightData(
-            summary="There are no expenses to analyze yet.",
-            highlights=[],
-            warnings=[],
-            suggestions=["Add a few expenses, then check the spending trend again."],
-            fallback=False,
-            fallbackReason=None,
-        )
+        if is_zh:
+            insight = ExpenseInsightData(
+                summary="目前尚無花費記錄可供分析。",
+                highlights=[],
+                warnings=[],
+                suggestions=["先新增幾筆花費，再來查看消費趨勢。"],
+                fallback=False,
+                fallbackReason=None,
+            )
+        else:
+            insight = ExpenseInsightData(
+                summary="There are no expenses to analyze yet.",
+                highlights=[],
+                warnings=[],
+                suggestions=["Add a few expenses, then check the spending trend again."],
+                fallback=False,
+                fallbackReason=None,
+            )
         return ApiResponse(success=True, data=insight, error=None)
 
     highlights: list[str] = []
     warnings: list[str] = []
     suggestions: list[str] = []
 
-    summary = f"{expense_count} expenses total {total_amount:,.0f} {currency} across {request.member_count} members."
+    if is_zh:
+        summary = f"共 {expense_count} 筆花費，合計 {total_amount:,.0f} {currency}，{request.member_count} 位成員。"
 
-    if request.top_expenses:
-        top_expense = request.top_expenses[0]
-        highlights.append(f"The largest expense is {top_expense.title} at {top_expense.amount:,.0f} {currency}.")
-        if total_amount > 0 and top_expense.amount / total_amount >= 0.4:
-            share = top_expense.amount / total_amount
-            warnings.append(
-                f"{top_expense.title} is about {share:.0%} of total spending; review this large expense."
+        if request.top_expenses:
+            top_expense = request.top_expenses[0]
+            highlights.append(f"最大一筆花費是「{top_expense.title}」，金額為 {top_expense.amount:,.0f} {currency}。")
+            if total_amount > 0 and top_expense.amount / total_amount >= 0.4:
+                share = top_expense.amount / total_amount
+                warnings.append(
+                    f"「{top_expense.title}」佔總花費約 {share:.0%}，建議確認此筆大額支出是否合理。"
+                )
+
+        if request.daily_totals:
+            peak_day = max(request.daily_totals, key=lambda item: item.amount)
+            highlights.append(
+                f"單日花費最高為 {peak_day.date.isoformat()}，金額 {peak_day.amount:,.0f} {currency}。"
             )
 
-    if request.daily_totals:
-        peak_day = max(request.daily_totals, key=lambda item: item.amount)
-        highlights.append(
-            f"The highest daily spend is {peak_day.date.isoformat()} at {peak_day.amount:,.0f} {currency}."
-        )
-
-    positive_balances = [balance for balance in request.member_balances if balance.balance > 0]
-    if positive_balances:
-        payer = max(positive_balances, key=lambda balance: balance.balance)
-        highlights.append(
-            f"{payer.member_name} has paid more upfront, with a net balance of {payer.balance:,.0f} {currency}."
-        )
-
-    if request.budget_amount is not None:
-        remaining_budget = request.budget_amount - total_amount
-        if remaining_budget < 0:
-            warnings.append(f"Current spending is {abs(remaining_budget):,.0f} {currency} over budget.")
-        elif request.remaining_days and request.remaining_days > 0:
-            daily_budget = remaining_budget / request.remaining_days
-            suggestions.append(
-                f"Remaining budget is about {remaining_budget:,.0f} {currency}; spend up to "
-                f"{daily_budget:,.0f} {currency} per day for the next {request.remaining_days} days."
+        positive_balances = [balance for balance in request.member_balances if balance.balance > 0]
+        if positive_balances:
+            payer = max(positive_balances, key=lambda balance: balance.balance)
+            highlights.append(
+                f"{payer.member_name} 已預先墊付較多費用，目前淨餘額為 {payer.balance:,.0f} {currency}。"
             )
 
-    if not suggestions:
-        suggestions.append("Review large lodging and transport items first to catch issues before settlement.")
+        if request.budget_amount is not None:
+            remaining_budget = request.budget_amount - total_amount
+            if remaining_budget < 0:
+                warnings.append(f"目前花費已超出預算 {abs(remaining_budget):,.0f} {currency}。")
+            elif request.remaining_days and request.remaining_days > 0:
+                daily_budget = remaining_budget / request.remaining_days
+                suggestions.append(
+                    f"剩餘預算約 {remaining_budget:,.0f} {currency}，"
+                    f"建議未來 {request.remaining_days} 天每天花費不超過 {daily_budget:,.0f} {currency}。"
+                )
+
+        if not suggestions:
+            suggestions.append("建議優先確認住宿與交通的大額支出，以便在結算前及早發現問題。")
+
+    else:
+        summary = f"{expense_count} expenses total {total_amount:,.0f} {currency} across {request.member_count} members."
+
+        if request.top_expenses:
+            top_expense = request.top_expenses[0]
+            highlights.append(f"The largest expense is {top_expense.title} at {top_expense.amount:,.0f} {currency}.")
+            if total_amount > 0 and top_expense.amount / total_amount >= 0.4:
+                share = top_expense.amount / total_amount
+                warnings.append(
+                    f"{top_expense.title} is about {share:.0%} of total spending; review this large expense."
+                )
+
+        if request.daily_totals:
+            peak_day = max(request.daily_totals, key=lambda item: item.amount)
+            highlights.append(
+                f"The highest daily spend is {peak_day.date.isoformat()} at {peak_day.amount:,.0f} {currency}."
+            )
+
+        positive_balances = [balance for balance in request.member_balances if balance.balance > 0]
+        if positive_balances:
+            payer = max(positive_balances, key=lambda balance: balance.balance)
+            highlights.append(
+                f"{payer.member_name} has paid more upfront, with a net balance of {payer.balance:,.0f} {currency}."
+            )
+
+        if request.budget_amount is not None:
+            remaining_budget = request.budget_amount - total_amount
+            if remaining_budget < 0:
+                warnings.append(f"Current spending is {abs(remaining_budget):,.0f} {currency} over budget.")
+            elif request.remaining_days and request.remaining_days > 0:
+                daily_budget = remaining_budget / request.remaining_days
+                suggestions.append(
+                    f"Remaining budget is about {remaining_budget:,.0f} {currency}; spend up to "
+                    f"{daily_budget:,.0f} {currency} per day for the next {request.remaining_days} days."
+                )
+
+        if not suggestions:
+            suggestions.append("Review large lodging and transport items first to catch issues before settlement.")
 
     insight = ExpenseInsightData(
         summary=summary,

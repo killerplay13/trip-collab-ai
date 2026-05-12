@@ -337,7 +337,7 @@ def test_parse_receipt_endpoint() -> None:
     assert response.json()["success"] is True
 
 
-def test_expense_insight_endpoint_returns_mock_data() -> None:
+def test_expense_insight_endpoint_returns_mock_data_zh_tw() -> None:
     response = client.post(
         "/ai/expenses/insight",
         json=expense_insight_request_payload(),
@@ -347,6 +347,32 @@ def test_expense_insight_endpoint_returns_mock_data() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["error"] is None
+    # zh-TW summary
+    assert "18" in body["data"]["summary"]
+    assert "12,800" in body["data"]["summary"]
+    # zh-TW highlights
+    assert "Hotel" in body["data"]["highlights"][0]
+    assert "2026-05-05" in body["data"]["highlights"][1]
+    assert "Alice" in body["data"]["highlights"][2]
+    assert body["data"]["warnings"]
+    # zh-TW suggestion contains remaining days info
+    assert "7,200" in body["data"]["suggestions"][0]
+    assert body["data"]["fallback"] is False
+    assert body["data"]["fallbackReason"] is None
+
+
+def test_expense_insight_endpoint_returns_mock_data_en() -> None:
+    payload = expense_insight_request_payload()
+    payload["language"] = "en"
+
+    response = client.post(
+        "/ai/expenses/insight",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
     assert "18" in body["data"]["summary"]
     assert "12,800 TWD" in body["data"]["summary"]
     assert "Hotel" in body["data"]["highlights"][0]
@@ -358,7 +384,7 @@ def test_expense_insight_endpoint_returns_mock_data() -> None:
     assert body["data"]["fallbackReason"] is None
 
 
-def test_expense_insight_endpoint_returns_empty_context_template() -> None:
+def test_expense_insight_endpoint_returns_empty_context_template_en() -> None:
     response = client.post(
         "/ai/expenses/insight",
         json={
@@ -382,6 +408,34 @@ def test_expense_insight_endpoint_returns_empty_context_template() -> None:
     assert body["data"]["warnings"] == []
     assert "Add a few expenses" in body["data"]["suggestions"][0]
     assert body["data"]["fallback"] is False
+
+
+def test_expense_insight_endpoint_returns_empty_context_template_zh_tw() -> None:
+    response = client.post(
+        "/ai/expenses/insight",
+        json={
+            "trip_id": "trip_123",
+            "language": "zh-TW",
+            "currency": "TWD",
+            "totalAmount": 0,
+            "expenseCount": 0,
+            "memberCount": 0,
+            "dailyTotals": [],
+            "topExpenses": [],
+            "memberBalances": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert "目前尚無花費記錄" in body["data"]["summary"]
+    assert body["data"]["highlights"] == []
+    assert body["data"]["warnings"] == []
+    assert "先新增幾筆花費" in body["data"]["suggestions"][0]
+    assert body["data"]["fallback"] is False
+
+
 
 def test_expense_insight_request_defaults_blank_language() -> None:
     request = ExpenseInsightRequest(
