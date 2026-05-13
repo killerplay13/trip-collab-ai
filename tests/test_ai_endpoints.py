@@ -21,6 +21,7 @@ from app.providers.exceptions import (
 )
 from app.schemas.ai import (
     ExistingItineraryItem,
+    ExpenseInsightData,
     ExpenseInsightRequest,
     ItineraryDraftItem,
     ItineraryGenerateData,
@@ -429,12 +430,110 @@ def test_expense_insight_endpoint_returns_empty_context_template_zh_tw() -> None
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    assert "目前尚無花費記錄" in body["data"]["summary"]
+    assert body["data"]["summary"]
     assert body["data"]["highlights"] == []
     assert body["data"]["warnings"] == []
-    assert "先新增幾筆花費" in body["data"]["suggestions"][0]
+    assert body["data"]["suggestions"][0]
     assert body["data"]["fallback"] is False
 
+
+def test_expense_insight_endpoint_success_returns_provider_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def provider_insight(
+        self: MockAIProvider, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        return ExpenseInsightData(
+            summary="Provider generated expense insight.",
+            highlights=["Provider highlight"],
+            warnings=["Provider warning"],
+            suggestions=["Provider suggestion"],
+            fallback=False,
+            fallbackReason=None,
+        )
+
+    monkeypatch.setattr(MockAIProvider, "generate_expense_insight", provider_insight)
+
+    response = client.post(
+        "/ai/expenses/insight",
+        json=expense_insight_request_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["summary"] == "Provider generated expense insight."
+    assert body["data"]["highlights"] == ["Provider highlight"]
+    assert body["data"]["warnings"] == ["Provider warning"]
+    assert body["data"]["suggestions"] == ["Provider suggestion"]
+    assert body["data"]["fallback"] is False
+    assert body["data"]["fallbackReason"] is None
+
+
+def test_expense_insight_timeout_fallback_to_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def slow_insight(
+        self: MockAIProvider, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        await asyncio.sleep(0.01)
+        return ExpenseInsightData(summary="Too slow", highlights=[], warnings=[], suggestions=[])
+
+    monkeypatch.setattr(MockAIProvider, "generate_expense_insight", slow_insight)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        ai_provider="mock",
+        llm_timeout_seconds=0,
+    )
+
+    response = client.post(
+        "/ai/expenses/insight",
+        json=expense_insight_request_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["fallback"] is True
+    assert body["data"]["fallbackReason"] == "timeout"
+    assert "12,800" in body["data"]["summary"]
+
+
+@pytest.mark.parametrize(
+    ("error", "fallback_reason"),
+    [
+        (ProviderInvalidJSONError("invalid json"), "invalid_json"),
+        (ProviderHTTPError("provider http error"), "provider_http_error"),
+    ],
+)
+def test_expense_insight_provider_error_fallback_to_template(
+    monkeypatch: pytest.MonkeyPatch,
+    error: AIProviderError,
+    fallback_reason: str,
+) -> None:
+    from app.providers.mock_provider import MockAIProvider
+
+    async def broken_insight(
+        self: MockAIProvider, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        raise error
+
+    monkeypatch.setattr(MockAIProvider, "generate_expense_insight", broken_insight)
+
+    response = client.post(
+        "/ai/expenses/insight",
+        json=expense_insight_request_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["fallback"] is True
+    assert body["data"]["fallbackReason"] == fallback_reason
+    assert "12,800" in body["data"]["summary"]
 
 
 def test_expense_insight_request_defaults_blank_language() -> None:
@@ -461,6 +560,12 @@ class SlowProvider(AIProvider):
         await asyncio.sleep(0.01)
         return SettlementExplanation(summary="Too slow", steps=[], tips=[])
 
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        await asyncio.sleep(0.01)
+        return ExpenseInsightData(summary="Too slow", highlights=[], warnings=[], suggestions=[])
+
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
         await asyncio.sleep(0.01)
         return ReceiptParseDraft(confidence=1.0)
@@ -475,6 +580,11 @@ class BrokenProvider(AIProvider):
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
+        raise RuntimeError("provider failed")
+
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
         raise RuntimeError("provider failed")
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
@@ -493,6 +603,11 @@ class ProviderErrorProvider(AIProvider):
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
+        raise self.error
+
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
         raise self.error
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:

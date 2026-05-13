@@ -5,6 +5,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.prompts.expense_insight_prompt import build_expense_insight_prompt
 from app.prompts.itinerary_prompt_builder import build_itinerary_generate_prompt
 from app.prompts.settlement_prompt import build_settlement_prompt
 from app.providers.base import AIProvider
@@ -18,6 +19,8 @@ from app.providers.exceptions import (
     ProviderUnavailableError,
 )
 from app.schemas.ai import (
+    ExpenseInsightData,
+    ExpenseInsightRequest,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
@@ -69,6 +72,31 @@ class OpenRouterProvider(AIProvider):
         except ValidationError as exc:
             raise ProviderInvalidResponseError(
                 "OpenRouter response does not match settlement explanation schema."
+            ) from exc
+
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        if not self.settings.openrouter_api_key.strip():
+            raise MissingProviderConfigError("OpenRouter API key is required.")
+
+        prompt = build_expense_insight_prompt(request)
+        response = await self._post_chat_completion(prompt)
+        content = self._extract_content(response)
+        payload = self._parse_json_content(content)
+        accepted_payload = {
+            key: payload[key]
+            for key in ("summary", "highlights", "warnings", "suggestions")
+            if key in payload
+        }
+        accepted_payload["fallback"] = False
+        accepted_payload["fallbackReason"] = None
+
+        try:
+            return ExpenseInsightData.model_validate(accepted_payload)
+        except ValidationError as exc:
+            raise ProviderInvalidResponseError(
+                "OpenRouter response does not match expense insight schema."
             ) from exc
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:

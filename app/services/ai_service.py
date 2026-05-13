@@ -9,6 +9,8 @@ from app.config import Settings
 from app.providers.base import AIProvider
 from app.providers.exceptions import AIProviderError
 from app.schemas.ai import (
+    ExpenseInsightData,
+    ExpenseInsightRequest,
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
@@ -18,6 +20,7 @@ from app.schemas.ai import (
     SettlementExplainRequest,
     SettlementExplanation,
 )
+from app.services.expense_insight_template import build_expense_insight_template
 
 
 T = TypeVar("T")
@@ -45,6 +48,19 @@ class AIService:
             "settlement.explain",
             self.provider.explain_settlement(request),
             lambda fallback_reason: self._settlement_fallback(request.language),
+        )
+
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        return await self._execute_with_fallback(
+            "expense.insight",
+            self.provider.generate_expense_insight(request),
+            lambda fallback_reason: build_expense_insight_template(
+                request,
+                fallback=True,
+                fallback_reason=fallback_reason,
+            ),
         )
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:

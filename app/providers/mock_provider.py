@@ -1,8 +1,10 @@
 from datetime import timedelta
 
-from app.providers.base import AIProvider
 from app.prompts.settlement_prompt import build_settlement_prompt
+from app.providers.base import AIProvider
 from app.schemas.ai import (
+    ExpenseInsightData,
+    ExpenseInsightRequest,
     ItineraryDraftItem,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
@@ -11,6 +13,7 @@ from app.schemas.ai import (
     SettlementExplainRequest,
     SettlementExplanation,
 )
+from app.services.expense_insight_template import build_expense_insight_template
 
 
 class MockAIProvider(AIProvider):
@@ -131,6 +134,11 @@ class MockAIProvider(AIProvider):
             steps=steps,
             tips=tips,
         )
+
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
+        return build_expense_insight_template(request, fallback=False, fallback_reason=None)
 
     async def parse_receipt(self, request: ReceiptParseRequest) -> ReceiptParseDraft:
         source = "image_url" if request.image_url else "raw_text" if request.raw_text else "empty input"

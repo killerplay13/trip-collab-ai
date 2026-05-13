@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 
 from app.schemas.ai import (
+    ExpenseInsightData,
+    ExpenseInsightRequest,
     ItineraryGenerateData,
     ItineraryGenerateRequest,
     ReceiptParseDraft,
@@ -21,6 +23,12 @@ class AIProvider(ABC):
     async def explain_settlement(
         self, request: SettlementExplainRequest
     ) -> SettlementExplanation:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def generate_expense_insight(
+        self, request: ExpenseInsightRequest
+    ) -> ExpenseInsightData:
         raise NotImplementedError
 
     @abstractmethod

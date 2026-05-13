@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.prompts.expense_insight_prompt import build_expense_insight_prompt
 from app.providers import openrouter_provider
 from app.providers.exceptions import (
     MissingProviderConfigError,
@@ -15,7 +16,7 @@ from app.providers.exceptions import (
     ProviderRateLimitError,
 )
 from app.providers.openrouter_provider import OpenRouterProvider
-from app.schemas.ai import ItineraryGenerateRequest, SettlementExplainRequest
+from app.schemas.ai import ExpenseInsightRequest, ItineraryGenerateRequest, SettlementExplainRequest
 
 
 def itinerary_request() -> ItineraryGenerateRequest:
@@ -87,6 +88,31 @@ def settlement_request(
     return SettlementExplainRequest(**payload)
 
 
+def expense_insight_request(language: str = "en") -> ExpenseInsightRequest:
+    return ExpenseInsightRequest(
+        trip_id="trip_123",
+        language=language,
+        currency="TWD",
+        totalAmount=12800,
+        expenseCount=18,
+        memberCount=4,
+        dailyTotals=[
+            {"date": "2026-05-04", "amount": 5200},
+            {"date": "2026-05-05", "amount": 7600},
+        ],
+        topExpenses=[
+            {"title": "Hotel", "amount": 6000, "date": "2026-05-04"},
+            {"title": "Dinner", "amount": 1800, "date": "2026-05-05"},
+        ],
+        memberBalances=[
+            {"memberName": "Alice", "paidAmount": 5000, "shareAmount": 3200, "balance": 1800},
+            {"memberName": "Bob", "paidAmount": 2500, "shareAmount": 4300, "balance": -1800},
+        ],
+        budgetAmount=20000,
+        remainingDays=2,
+    )
+
+
 def valid_content() -> str:
     return json.dumps(
         {
@@ -114,6 +140,17 @@ def valid_settlement_content() -> str:
             "summary": "Alice needs to pay Bob to settle the trip.",
             "steps": ["Alice should pay Bob 300 TWD."],
             "tips": ["Amounts are based on backend settlement results."],
+        }
+    )
+
+
+def valid_expense_insight_content() -> str:
+    return json.dumps(
+        {
+            "summary": "The trip has 18 expenses totaling 12,800 TWD.",
+            "highlights": ["Hotel is the largest expense."],
+            "warnings": ["Hotel is a large share of total spending."],
+            "suggestions": ["Keep the remaining daily budget under control."],
         }
     )
 
@@ -404,3 +441,139 @@ async def test_explain_settlement_schema_invalid_raises_provider_invalid_respons
 
     with pytest.raises(ProviderInvalidResponseError):
         await provider.explain_settlement(settlement_request())
+
+
+@pytest.mark.asyncio
+async def test_generate_expense_insight_parses_valid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": valid_expense_insight_content()}}]},
+        )
+
+    requests = install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    result = await provider.generate_expense_insight(expense_insight_request())
+
+    assert result.summary == "The trip has 18 expenses totaling 12,800 TWD."
+    assert result.highlights == ["Hotel is the largest expense."]
+    assert result.warnings == ["Hotel is a large share of total spending."]
+    assert result.suggestions == ["Keep the remaining daily budget under control."]
+    assert result.fallback is False
+    assert result.fallbackReason is None
+
+    body = json.loads(requests[0].content)
+    user_prompt = body["messages"][1]["content"]
+    assert "Spring Boot context is the only source of truth" in user_prompt
+    assert "Do not recalculate totalAmount, dailyTotals, or memberBalances" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_expense_insight_invalid_json_raises_provider_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]})
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderInvalidJSONError):
+        await provider.generate_expense_insight(expense_insight_request())
+
+
+@pytest.mark.asyncio
+async def test_generate_expense_insight_schema_invalid_raises_provider_invalid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"summary": "ok"})}}]})
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderInvalidResponseError):
+        await provider.generate_expense_insight(expense_insight_request())
+
+
+@pytest.mark.asyncio
+async def test_generate_expense_insight_rate_limit_raises_provider_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "rate limited"})
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderRateLimitError):
+        await provider.generate_expense_insight(expense_insight_request())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_code",
+    [402, 403],
+)
+async def test_generate_expense_insight_quota_response_raises_provider_quota_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json={"error": "insufficient credits"})
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderQuotaExceededError):
+        await provider.generate_expense_insight(expense_insight_request())
+
+
+@pytest.mark.asyncio
+async def test_generate_expense_insight_http_500_raises_provider_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "provider failed"})
+
+    install_mock_transport(monkeypatch, handler)
+    provider = OpenRouterProvider(openrouter_settings())
+
+    with pytest.raises(ProviderHTTPError):
+        await provider.generate_expense_insight(expense_insight_request())
+
+
+def test_expense_insight_prompt_contains_contract_terms() -> None:
+    prompt = build_expense_insight_prompt(expense_insight_request())
+
+    assert "Return JSON only" in prompt
+    assert "Do not include markdown" in prompt
+    assert '"summary"' in prompt
+    assert '"highlights"' in prompt
+    assert '"warnings"' in prompt
+    assert '"suggestions"' in prompt
+    assert "Spring Boot context is the only source of truth" in prompt
+    assert "Do not recalculate totalAmount, dailyTotals, or memberBalances" in prompt
+    assert "totalAmount" in prompt
+    assert "dailyTotals" in prompt
+    assert "topExpenses" in prompt
+    assert "memberBalances" in prompt
+    assert "budgetAmount" in prompt
+    assert "remainingDays" in prompt
+
+
+def test_expense_insight_prompt_contains_zh_tw_language_instruction() -> None:
+    prompt = build_expense_insight_prompt(expense_insight_request(language="zh-TW"))
+
+    assert "Respond entirely in zh-TW" in prompt
+    assert "Traditional Chinese" in prompt
+
+
+def test_expense_insight_prompt_contains_en_language_instruction() -> None:
+    prompt = build_expense_insight_prompt(expense_insight_request(language="en"))
+
+    assert "Respond entirely in en" in prompt
+    assert "Use English" in prompt
